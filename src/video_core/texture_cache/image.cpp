@@ -154,15 +154,24 @@ Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,
 
     constexpr auto tiling = vk::ImageTiling::eOptimal;
     const auto supported_format = instance.GetSupportedFormat(info.pixel_format, format_features);
-    const vk::PhysicalDeviceImageFormatInfo2 format_info{
+    vk::PhysicalDeviceImageFormatInfo2 format_info{
         .format = supported_format,
         .type = ConvertImageType(info.type),
         .tiling = tiling,
         .usage = usage_flags,
         .flags = flags,
     };
-    const auto image_format_properties =
+    auto image_format_properties =
         instance.GetPhysicalDevice().getImageFormatProperties2(format_info);
+    if (image_format_properties.result == vk::Result::eErrorFormatNotSupported &&
+        (flags & vk::ImageCreateFlagBits::eBlockTexelViewCompatible)) {
+        // Block texel view support is only probed for 2D BC1. Some drivers (e.g. RADV) reject it
+        // for other combinations such as 3D BC3 images, so retry without it.
+        flags &= ~vk::ImageCreateFlagBits::eBlockTexelViewCompatible;
+        format_info.flags = flags;
+        image_format_properties =
+            instance.GetPhysicalDevice().getImageFormatProperties2(format_info);
+    }
     if (image_format_properties.result == vk::Result::eErrorFormatNotSupported) {
         LOG_ERROR(Render_Vulkan, "image format {} type {} is not supported (flags {}, usage {})",
                   vk::to_string(supported_format), vk::to_string(format_info.type),
